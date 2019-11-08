@@ -21,6 +21,7 @@ class Postfix(object):
         self.nums = ['0','1','2','3','4','5','6','7','8','9','.']
         self.keywords = ['add','mul','sub','div','rem','lt','le','eq','ne','gt','ge','push','swap','pop','sel','get','put','prs','pri','exec','quit','stview','stclear']
         self.argsto = None
+        self.program = None
 
     def main(self):
         arglen = len(sys.argv)
@@ -44,6 +45,7 @@ class Postfix(object):
 
     def lexer(self, program):
         if type(program) is str:
+            self.program = program
             code = program[:]
             tokens = []
             char = 0
@@ -94,7 +96,9 @@ class Postfix(object):
             elif i[0] in self.keywords:
                 oparg = (i[0], None)
             else:
-                self._vm.give_error('Parse', 'Cannot parse program, undefined token.')
+                self._vm.cur_program = self.program
+                self._vm.current_op = ('Parse',i[1])
+                self._vm.push_error('Cannot parse program, undefined token')
             instructions.append((oparg[0], oparg[1], i[1]))
         return instructions
 
@@ -148,7 +152,7 @@ class Postfix(object):
         signal.signal(signal.SIGINT, self.keyboardInterruptHandler)
         print("Postfix Language REPL")
         while True:
-            getin = input("postfix>> ")
+            getin = input("postfix]> ")
             self.run_program(getin)
 
 class VirtualMachine(object):
@@ -175,6 +179,7 @@ class VirtualMachine(object):
             'ge': lambda a,b: int(a<=b),
         }
         self.numerals = [int, float]
+        self.hasError = False
 
     def is_empty(self):
         return not len(self.stack) > 0
@@ -194,6 +199,7 @@ class VirtualMachine(object):
                 self.give_error('VirtualMachine', 'Operation not found')
 
     def execute_program(self, program):
+        self.hasError = False
         self.executed_code += program
         while len(self.executed_code) > self.counter:
             opr = self.executed_code[self.counter]
@@ -243,8 +249,8 @@ class VirtualMachine(object):
             if not self.type_check(self.stack[-1], self.numerals): self.push_error('Last value is not a number')
             else: return True
         elif type=='last_in_range':
-            if self.stack[-1] >= 1 and self.stack <= len(self): self.push_error('Last value is not a valid stack index')
-            else: return True
+            if self.stack[-1] >= 1 and self.stack[-1] <= len(self): return True
+            else: self.push_error('Last value is not a valid stack index')
         elif type=='last_string':
             if not self.type_check(self.stack[-1], [str]): self.push_error('Last value is not a number')
             else: return True
@@ -257,6 +263,8 @@ class VirtualMachine(object):
         l = []
         for arg in args:
             l.append(int(self.error_handler(arg)))
+            if self.hasError:
+                return False
         if sum(l) == len(l):
             return True
         return False
@@ -268,12 +276,13 @@ class VirtualMachine(object):
     def push_error(self, message = ''):
         src, opref = self.current_op[0], self.current_op[1]
         print(src.upper() + ' Error: ' + message + '. [at character ' + str(opref) + ']')
-        trace_beg = min(15,len(self.cur_program[:opref]))
-        trace_end = min(15,len(self.cur_program[opref:]))
+        trace_beg = min(25,len(self.cur_program[:opref]))
+        trace_end = min(25,len(self.cur_program[opref:]))
         print("Trace: \"" + ''.join(self.cur_program[opref-trace_beg:opref+trace_end]) + "\"")
         for i in range(trace_beg + 7):
             print(" ", end="")
         print("^")
+        self.hasError = True
 
     def op_push(self, *args):
         for arg in args:
