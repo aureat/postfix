@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+
+import postfix
+
+if __name__ == '__main__':
+    pf = postfix.Postfix()
+    pf.main()
