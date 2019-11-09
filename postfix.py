@@ -19,7 +19,9 @@ class Postfix(object):
         self._vm = VirtualMachine()
         self.instructions = []
         self.nums = ['0','1','2','3','4','5','6','7','8','9','.']
-        self.keywords = ['add','mul','sub','div','rem','lt','le','eq','ne','gt','ge','push','swap','pop','sel','get','put','prs','pri','exec','quit','stview','stclear']
+        self.keywords = ['add','mul','sub','div','rem','lt','le','eq','ne','gt','ge',
+                         'push','swap','pop','sel','get','put','prs','pri','exec',
+                         'quit','stview','stclear','sysenv','store','load','del']
         self.argsto = None
         self.program = None
 
@@ -69,10 +71,10 @@ class Postfix(object):
                             token = ''
                     except IndexError:
                         pass
-            if tokens[1][0] != 'postfix':
-                self._vm.give_error('Lexing', 'Cannot recognize program, missing `postfix` token.')
+            # if tokens[1][0] != 'postfix':
+            #     self._vm.give_error('Lexing', 'Cannot recognize program, missing `postfix` token.')
             tokens.pop()
-            tokens = tokens[2:]
+            tokens = tokens[1:]
             return tokens
         else:
             self._vm.give_error('Lexing', 'Cannot recognize program.')
@@ -88,7 +90,7 @@ class Postfix(object):
                     oparg = ('push', tuple(seq))
                 seq.append(i)
             elif i[0][0] == '"':
-                oparg = ('push', i[0])
+                oparg = ('push', i[0][1:-1])
             elif i[0][0] in self.nums:
                 oparg = ('push', self.convert_number(i[0]))
             elif i[0][0] == '(':
@@ -96,8 +98,8 @@ class Postfix(object):
             elif i[0] in self.keywords:
                 oparg = (i[0], None)
             else:
-                self._vm.cur_program = self.program
-                self._vm.current_op = ('Parse',i[1])
+                self._vm.env['program'] = self.program
+                self._vm.env['operation'] = ('Parse',i[1])
                 self._vm.push_error('Cannot parse program, undefined token')
             instructions.append((oparg[0], oparg[1], i[1]))
         return instructions
@@ -131,10 +133,10 @@ class Postfix(object):
 
     def run_program(self, program):
         if self.argsto:
-            self._vm.stack += self.check_args(self.argsto)
+            self._vm.env['stack'] += self.check_args(self.argsto)
             self.argsto = None
         instructions = self.prepare_instructions(self.lexer(program))
-        self._vm.cur_program = program
+        self._vm.env['program'] = program
         self._vm.execute_program(instructions)
 
     def runFile(self, path):
@@ -145,7 +147,6 @@ class Postfix(object):
         else: full_path = path
         with open(full_path, 'r') as content_file:
             content = content_file.read()
-            print(content)
             self.run_program(content)
 
     def repl(self):
@@ -158,13 +159,15 @@ class Postfix(object):
 class VirtualMachine(object):
 
     def __init__(self):
-        self.stack = []
-        self.environment = {}
-        self.counter = 0
-        self.current_op = (None, None)
-        self.executed_code = []
-        self.cur_program = None
-        self.special_output = False
+        self.env = {
+            'program': None,
+            'operation': (None, None),
+            'stack': [],
+            'spoutput': False,
+            'excode': [],
+            'haserror': False,
+            'counter': 0,
+        }
         self.binary_op = {
             'add': lambda a,b: a+b,
             'sub': lambda a,b: b-a,
@@ -179,13 +182,12 @@ class VirtualMachine(object):
             'ge': lambda a,b: int(a<=b),
         }
         self.numerals = [int, float]
-        self.hasError = False
 
     def is_empty(self):
-        return not len(self.stack) > 0
+        return not len(self.env['stack']) > 0
 
     def __len__(self):
-        return len(self.stack)
+        return len(self.env['stack'])
 
     def find_op(self, op):
         try:
@@ -199,15 +201,15 @@ class VirtualMachine(object):
                 self.give_error('VirtualMachine', 'Operation not found')
 
     def execute_program(self, program):
-        self.hasError = False
-        self.executed_code += program
-        while len(self.executed_code) > self.counter:
-            opr = self.executed_code[self.counter]
+        self.env['haserror'] = False
+        self.env['excode'] += program
+        while len(self.env['excode']) > self.env['counter']:
+            opr = self.env['excode'][self.env['counter']]
             op = opr[0]
             fn,bin = self.find_op(op)
             arg = opr[1]
             char = opr[2]
-            self.current_op = (op,char)
+            self.env['operation'] = (op,char)
             if arg is not None:
                 fn(arg)
             else:
@@ -215,13 +217,13 @@ class VirtualMachine(object):
                     fn(op)
                 else:
                     fn()
-            self.counter += 1
-        if not self.special_output and not self.is_empty():
-            print(self.stack[-1])
-        elif self.is_empty():
+            self.env['counter'] += 1
+        if self.env['spoutput']:
+            self.env['spoutput'] = False
+        elif not self.env['haserror'] and not self.env['spoutput'] and not self.is_empty():
+            print(self.env['stack'][-1])
+        elif not self.env['haserror'] and self.is_empty():
             print('None')
-        elif self.special_output:
-            self.special_output = False
 
     def type_check(self, obj, lst):
         for i in lst:
@@ -240,22 +242,22 @@ class VirtualMachine(object):
             if len(self) > 2: return True
             else: self.push_error('Not enough values to perform operation')
         elif type=='zero_div':
-            if self.stack[-1] == 0: self.push_error('Cannot divide by zero')
+            if self.env['stack'][-1] == 0: self.push_error('Cannot divide by zero')
             else: return True
         elif type=='two_numbers':
-            if not self.type_check(self.stack[-1], self.numerals) or not self.type_check(self.stack[-2], self.numerals):
+            if not self.type_check(self.env['stack'][-1], self.numerals) or not self.type_check(self.env['stack'][-2], self.numerals):
                 self.push_error('Values should be integers')
         elif type=='last_number':
-            if not self.type_check(self.stack[-1], self.numerals): self.push_error('Last value is not a number')
+            if not self.type_check(self.env['stack'][-1], self.numerals): self.push_error('Last value is not a number')
             else: return True
         elif type=='last_in_range':
-            if self.stack[-1] >= 1 and self.stack[-1] <= len(self): return True
+            if self.env['stack'][-1] >= 1 and self.env['stack'][-1] <= len(self): return True
             else: self.push_error('Last value is not a valid stack index')
         elif type=='last_string':
-            if not self.type_check(self.stack[-1], [str]): self.push_error('Last value is not a number')
+            if not self.type_check(self.env['stack'][-1], [str]): self.push_error('Last value is not a number')
             else: return True
         elif type=='last_executable':
-            if not self.type_check(self.stack[-1], [tuple]): self.push_error('Last value is not an executable sequence')
+            if not self.type_check(self.env['stack'][-1], [tuple]): self.push_error('Last value is not an executable sequence')
             else: return True
         return True
 
@@ -263,7 +265,7 @@ class VirtualMachine(object):
         l = []
         for arg in args:
             l.append(int(self.error_handler(arg)))
-            if self.hasError:
+            if self.env['haserror']:
                 return False
         if sum(l) == len(l):
             return True
@@ -274,85 +276,102 @@ class VirtualMachine(object):
         exit(0)
 
     def push_error(self, message = ''):
-        src, opref = self.current_op[0], self.current_op[1]
+        src, opref = self.env['operation'][0], self.env['operation'][1]
         print(src.upper() + ' Error: ' + message + '. [at character ' + str(opref) + ']')
-        trace_beg = min(25,len(self.cur_program[:opref]))
-        trace_end = min(25,len(self.cur_program[opref:]))
-        print("Trace: \"" + ''.join(self.cur_program[opref-trace_beg:opref+trace_end]) + "\"")
+        trace_beg = min(25,len(self.env['program'][:opref]))
+        trace_end = min(25,len(self.env['program'][opref:]))
+        print("Trace: \"" + ''.join(self.env['program'][opref-trace_beg:opref+trace_end]) + "\"")
         for i in range(trace_beg + 7):
             print(" ", end="")
         print("^")
-        self.hasError = True
+        self.env['haserror'] = True
 
     def op_push(self, *args):
         for arg in args:
-            self.stack.append(arg)
+            self.env['stack'].append(arg)
 
     def op_swap(self):
         if self.cond_error('two_values'):
-            a = self.stack.pop()
-            b = self.stack.pop()
-            self.stack.append(a)
-            self.stack.append(b)
+            a = self.env['stack'].pop()
+            b = self.env['stack'].pop()
+            self.env['stack'].append(a)
+            self.env['stack'].append(b)
 
     def op_pop(self):
         if self.cond_error('empty'):
-            self.stack.pop()
+            self.env['stack'].pop()
 
     def do_binary(self, type):
         if self.cond_error('two_values', 'two_numbers'):
-            a = self.stack.pop()
-            b = self.stack.pop()
+            a = self.env['stack'].pop()
+            b = self.env['stack'].pop()
             if type in ['div', 'rem'] and not self.cond_error('zero_div'):
-                self.stack.append(self.binary_op[type](a, b))
+                self.env['stack'].append(self.binary_op[type](a, b))
             else:
-                self.stack.append(self.binary_op[type](a, b))
+                self.env['stack'].append(self.binary_op[type](a, b))
 
     def op_sel(self):
         if self.cond_error('three_values', 'last_number'):
-            a = self.stack.pop()
-            b = self.stack.pop()
-            c = self.stack.pop()
+            a = self.env['stack'].pop()
+            b = self.env['stack'].pop()
+            c = self.env['stack'].pop()
             if c == 0:
-                self.stack.append(a)
+                self.env['stack'].append(a)
             else:
-                self.stack.append(b)
+                self.env['stack'].append(b)
 
     def op_get(self):
         if self.cond_error('empty', 'last_number', 'last_in_range'):
-            a = self.stack.pop()
-            self.stack.append(self.stack[-a])
+            a = self.env['stack'].pop()
+            self.env['stack'].append(self.env['stack'][-a])
 
     def op_put(self):
         if self.cond_error('two_values', 'last_number', 'last_in_range'):
-            a = self.stack.pop()
-            b = self.stack.pop()
-            self.stack[-a] = b
+            a = self.env['stack'].pop()
+            b = self.env['stack'].pop()
+            self.env['stack'][-a] = b
 
     def op_prs(self):
         if self.cond_error('empty', 'last_string'):
-            print(self.stack.pop())
-            self.special_output = True
+            print(self.env['stack'].pop())
+            self.env['spoutput'] = True
 
     def op_pri(self):
         if self.cond_error('empty', 'last_number'):
-            print(self.stack.pop())
-            self.special_output = True
+            print(self.env['stack'].pop())
+            self.env['spoutput'] = True
 
     def op_exec(self):
         if self.cond_error('empty', 'last_executable'):
-            self.executed_code = list(self.stack.pop()) + self.executed_code
+            self.env['excode'] = list(self.env['stack'].pop()) + self.env['excode']
 
     def op_stview(self):
         if self.cond_error('empty'):
-            print('postfix.stack -> ' + ' '.join([str(i) for i in self.stack]))
-            self.special_output = True
+            print('postfix.stack -> ' + ' '.join([str(i) for i in self.env['stack']]))
+            self.env['spoutput'] = True
 
     def op_stclear(self):
-        self.stack = []
+        self.env['stack'] = []
 
     def op_quit(self):
         exit(0)
+
+    def op_store(self):
+        if self.cond_error('two_values','last_string'):
+            v1 = self.env['stack'].pop()
+            v2 = self.env['stack'].pop()
+            self.env.update({v1: v2})
+
+    def op_load(self):
+        name = self.env['stack'].pop()
+        self.env['stack'].append(self.env[name])
+
+    def op_del(self):
+        name = self.env['stack'].pop()
+        val = self.env.pop(name, None)
+
+    def op_sysenv(self):
+        print(self.env)
 
 if __name__ == '__main__':
     pf = Postfix()
