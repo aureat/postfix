@@ -47,6 +47,12 @@ class Postfix(object):
 
     def lexer(self, program):
         if type(program) is str:
+            if program[0] != '(':
+                self.error(program, 'Lexer', 0,'Missing paranthesis.')
+                return []
+            if program[-1] != ')':
+                self.error(program, 'Lexer', len(program)+1, 'Missing paranthesis')
+                return []
             self.program = program
             code = program[:]
             tokens = []
@@ -58,6 +64,7 @@ class Postfix(object):
                     tokens.append((token, char))
                     get = False
                     token = ''
+                elif c == ' ': pass
                 elif c == '(' or c == ')': tokens.append((c, i))
                 else:
                     if not get:
@@ -77,31 +84,38 @@ class Postfix(object):
             tokens = tokens[1:]
             return tokens
         else:
-            self._vm.give_error('Lexing', 'Cannot recognize program.')
+            self._vm.give_error('Lexer', 'Cannot recognize program.')
 
     def prepare_instructions(self, tokens):
         instructions = []
         getseq = False
         seq = []
         for i in tokens:
+            f = True
             if getseq:
                 if i[0][0] == ')':
                     getseq = False
-                    oparg = ('push', tuple(seq))
-                seq.append(i)
+                    oparg = ('push', self.prepare_instructions(seq))
+                    seq = []
+                    f = True
+                else:
+                    getseq = True
+                    seq.append(i)
+                    f = False
             elif i[0][0] == '"':
                 oparg = ('push', i[0][1:-1])
             elif i[0][0] in self.nums:
                 oparg = ('push', self.convert_number(i[0]))
             elif i[0][0] == '(':
                 getseq = True
+                f = False
             elif i[0] in self.keywords:
                 oparg = (i[0], None)
             else:
-                self._vm.env['program'] = self.program
-                self._vm.env['operation'] = ('Parse',i[1])
-                self._vm.push_error('Cannot parse program, undefined token')
-            instructions.append((oparg[0], oparg[1], i[1]))
+                self.error(self.program, 'Parse', i[1], 'Cannot parse program, undefined token')
+                f = False
+            if f:
+                instructions.append((oparg[0], oparg[1], i[1]))
         return instructions
 
     def convert_number(self, num):
@@ -130,6 +144,11 @@ class Postfix(object):
         if sum(truth) < len(args):
             self._vm.give_error('Argument','`' + str(args[truth.index(0)]) + '` is not a valid argument.')
         return args
+
+    def error(self, program, name, char, text):
+        self._vm.env['program'] = program
+        self._vm.env['operation'] = (name,char)
+        self._vm.push_error(text)
 
     def run_program(self, program):
         if self.argsto:
@@ -182,6 +201,9 @@ class VirtualMachine(object):
             'ge': lambda a,b: int(a<=b),
         }
         self.numerals = [int, float]
+        self.signals = {
+            'lexer_error': False
+        }
 
     def is_empty(self):
         return not len(self.env['stack']) > 0
@@ -220,7 +242,7 @@ class VirtualMachine(object):
             self.env['counter'] += 1
         if self.env['spoutput']:
             self.env['spoutput'] = False
-        elif not self.env['haserror'] and not self.env['spoutput'] and not self.is_empty():
+        elif not self.env['haserror'] and not self.is_empty():
             print(self.env['stack'][-1])
         elif not self.env['haserror'] and self.is_empty():
             print('None')
@@ -257,7 +279,7 @@ class VirtualMachine(object):
             if not self.type_check(self.env['stack'][-1], [str]): self.push_error('Last value is not a number')
             else: return True
         elif type=='last_executable':
-            if not self.type_check(self.env['stack'][-1], [tuple]): self.push_error('Last value is not an executable sequence')
+            if not self.type_check(self.env['stack'][-1], [list]): self.push_error('Last value is not an executable sequence')
             else: return True
         return True
 
@@ -276,15 +298,15 @@ class VirtualMachine(object):
         exit(0)
 
     def push_error(self, message = ''):
+        self.env['haserror'] = True
         src, opref = self.env['operation'][0], self.env['operation'][1]
-        print(src.upper() + ' Error: ' + message + '. [at character ' + str(opref) + ']')
+        print(src.upper() + ' Error: ' + message + ' [at character ' + str(opref) + ']')
         trace_beg = min(25,len(self.env['program'][:opref]))
         trace_end = min(25,len(self.env['program'][opref:]))
         print("Trace: \"" + ''.join(self.env['program'][opref-trace_beg:opref+trace_end]) + "\"")
         for i in range(trace_beg + 7):
             print(" ", end="")
         print("^")
-        self.env['haserror'] = True
 
     def op_push(self, *args):
         for arg in args:
@@ -343,7 +365,7 @@ class VirtualMachine(object):
 
     def op_exec(self):
         if self.cond_error('empty', 'last_executable'):
-            self.env['excode'] = list(self.env['stack'].pop()) + self.env['excode']
+            self.env['excode'] += list(self.env['stack'].pop())
 
     def op_stview(self):
         if self.cond_error('empty'):
