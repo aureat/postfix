@@ -1,6 +1,8 @@
 # Postfix
 A mini stack language implemented from scratch in python.
+* Read-eval-print-loop
 * Store and load variables
+* Stack operations
 * Error traceback
 
 ## Usage
@@ -10,4 +12,4 @@ A mini stack language implemented from scratch in python.
 * Additionally, you can initialize the REPL with optional arguments using the following command ``` python postfix.py 'repl' [args] ```
 
 ## Syntax
-The specification of this language can be found here: https://cs.wellesley.edu/~cs251/s05/postfix.pdf
+Full specification of this language can be found here: https://cs.wellesley.edu/~cs251/s05/postfix.pdf
