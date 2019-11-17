@@ -2,11 +2,7 @@
 *** Postfix: A Simple Stack Language (Postfix)
 *** Implementation with additional features
 
-TODO:
- 1. File not found error
- 2. Special output signal
- 3. Fix empty string stview none error
-
+https://github.com/altunh/postfix
 """
 
 import sys
@@ -162,11 +158,16 @@ class Postfix(object):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         rel_path = path
         abs_file_path = os.path.join(script_dir, rel_path)
-        if os.path.exists(abs_file_path): full_path = abs_file_path
-        else: full_path = path
-        with open(full_path, 'r') as content_file:
-            content = content_file.read()
-            self.run_program(content)
+        if os.path.exists(abs_file_path):
+            full_path = abs_file_path
+        else:
+            full_path = path
+        try:
+            with open(full_path, 'r') as content_file:
+                content = content_file.read()
+                self.run_program(content)
+        except IOError:
+            self._vm.give_error('File', 'No such file found')
 
     def repl(self):
         signal.signal(signal.SIGINT, self.keyboardInterruptHandler)
