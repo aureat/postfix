@@ -9,6 +9,9 @@ import sys
 import os
 import signal
 
+lexc = 0
+parserc = 0
+
 class Postfix(object):
 
     def __init__(self):
@@ -17,7 +20,7 @@ class Postfix(object):
         self.nums = ['0','1','2','3','4','5','6','7','8','9','.']
         self.keywords = ['add','mul','sub','div','rem','lt','le','eq','ne','gt','ge',
                          'push','swap','pop','sel','get','put','prs','pri','exec',
-                         'quit','stview','stclear','sysenv','store','load','del']
+                         'quit','stview','stclear','sysenv','store','load','del', 'begin']
         self.argsto = None
         self.program = None
 
@@ -39,79 +42,112 @@ class Postfix(object):
             self._vm.give_error('Usage', 'usage : postfix repl/[path] args')
 
     def keyboardInterruptHandler(self, signal, frame):
+        self._vm.op_stview()
         exit(0)
 
     def lexer(self, program):
-        if type(program) is str:
-            if program[0] != '(':
-                self.error(program, 'Lexer', 0,'Missing paranthesis.')
-                return []
-            if program[-1] != ')':
-                self.error(program, 'Lexer', len(program)+1, 'Missing paranthesis')
-                return []
-            self.program = program
-            code = program[:]
-            tokens = []
-            char = 0
-            token = ''
-            get = False
-            for i,c in enumerate(code):
-                if get and c == ' ':
-                    tokens.append((token, char))
-                    get = False
-                    token = ''
-                elif c == ' ': pass
-                elif c == '(' or c == ')': tokens.append((c, i))
-                else:
-                    if not get:
-                        char = i
-                    token += c
-                    get = True
-                    try:
-                        if code[i+1] == '(' or code[i+1] == ')':
-                            tokens.append((token, char))
-                            get = False
-                            token = ''
-                    except IndexError:
-                        pass
-            # if tokens[1][0] != 'postfix':
-            #     self._vm.give_error('Lexing', 'Cannot recognize program, missing `postfix` token.')
-            tokens.pop()
-            tokens = tokens[1:]
-            return tokens
-        else:
-            self._vm.give_error('Lexer', 'Cannot recognize program.')
+        global lexc
+        self.program = program
+        length = len(program)
+        tokens = []
+        def p(am=0):
+            global lexc
+            if lexc+am <= length-1:
+                return program[lexc+am]
+            return None
+        def identifier():
+            global lexc
+            name = ''
+            while p().isalpha() or p().isdigit() or p() == '_':
+                name += p()
+                lexc += 1
+            return name
+        def number():
+            global lexc
+            num = ''
+            while p().isdigit() or p() == '.':
+                num += p()
+                lexc += 1
+            return num
+        def string(char):
+            global lexc
+            lexc += 1
+            string = ''
+            while p() != char:
+                string += p()
+                lexc += 1
+            lexc += 1
+            return string
+        while p() != None:
+            char = lexc
+            if p().isspace() or p() == '\n':
+                lexc += 1
+            elif p() == ')' or p() == '(':
+                tokens.append((p(), char, 'symbol'))
+                lexc+=1
+            elif p().isalpha() or p() == '_':
+                tokens.append((identifier(), char, 'name'))
+            elif p().isdigit():
+                tokens.append((number(), char, 'number'))
+            elif p() == '"' or p() == "'":
+                tokens.append((string(p()), char, 'string'))
+            else:
+                self._vm.give_error('Lexer', 'Cannot recognize program')
+        lexc = 0
+        return tokens
 
     def prepare_instructions(self, tokens):
         instructions = []
-        getseq = False
-        seq = []
-        for i in tokens:
-            f = True
-            if getseq:
-                if i[0][0] == ')':
-                    getseq = False
-                    oparg = ('push', self.prepare_instructions(seq))
-                    seq = []
-                    f = True
+        length = len(tokens)
+        def cur():
+            global parserc
+            if parserc <= length - 1:
+                return tokens[parserc]
+            return 'EOF'
+        def matchs(sym):
+            global parserc
+            if cur()[0] != sym:
+                self.error(self.program, 'Syntax', cur()[1], 'Invalid syntax3')
+                return False
+            parserc += 1
+            return True
+        def matcht(sym):
+            global parserc
+            if cur()[2] != sym:
+                self.error(self.program, 'Syntax', cur()[1], 'Invalid syntax2')
+                return False
+            parserc += 1
+            return True
+        def parse_list():
+            global parserc
+            begin = False
+            instr = []
+            matchs('(')
+            if cur()[0] == 'begin':
+                matchs('begin')
+                begin = True
+                instr = instructions
+            while cur()[0] != ')':
+                t = cur()
+                if t[0] in self.keywords:
+                    instr.append((t[0], None, t[1], t[2]))
+                    parserc += 1
+                elif t[2] == 'name' or t[2] == 'string':
+                    instr.append(('push', str(t[0]), t[1], t[2]))
+                    parserc += 1
+                elif t[2] == 'number':
+                    instr.append(('push', self.convert_number(t[0]), t[1], t[2]))
+                    parserc += 1
+                elif t[0] == '(':
+                    instr.append(('push', (parse_list(), 'list'), 0, 'list'))
                 else:
-                    getseq = True
-                    seq.append(i)
-                    f = False
-            elif i[0][0] == '"':
-                oparg = ('push', i[0][1:-1])
-            elif i[0][0] in self.nums:
-                oparg = ('push', self.convert_number(i[0]))
-            elif i[0][0] == '(':
-                getseq = True
-                f = False
-            elif i[0] in self.keywords:
-                oparg = (i[0], None)
-            else:
-                self.error(self.program, 'Parse', i[1], 'Cannot parse program, undefined token')
-                f = False
-            if f:
-                instructions.append((oparg[0], oparg[1], i[1]))
+                    self.error(self.program, 'Syntax', cur()[1], 'Invalid syntax1')
+            matchs(')')
+            if not begin:
+                return instr
+        parse_list()
+        global parserc
+        parserc = 0
         return instructions
 
     def convert_number(self, num):
@@ -173,7 +209,7 @@ class Postfix(object):
         signal.signal(signal.SIGINT, self.keyboardInterruptHandler)
         print("Postfix Language REPL")
         while True:
-            getin = input("postfix]> ")
+            getin = input(">>> ")
             self.run_program(getin)
 
 class VirtualMachine(object):
@@ -244,7 +280,7 @@ class VirtualMachine(object):
         if self.env['spoutput']:
             self.env['spoutput'] = False
         elif not self.env['haserror'] and not self.is_empty():
-            print(self.env['stack'][-1])
+            print(self.viewstr(self.env['stack'][-1]))
         elif not self.env['haserror'] and self.is_empty():
             print('None')
 
@@ -301,7 +337,7 @@ class VirtualMachine(object):
     def push_error(self, message = ''):
         self.env['haserror'] = True
         src, opref = self.env['operation'][0], self.env['operation'][1]
-        print(src.upper() + ' Error: ' + message + ' [at character ' + str(opref) + ']')
+        print(src.upper() + ' Error: ' + message + ' [at char. ' + str(opref) + ']')
         trace_beg = min(25,len(self.env['program'][:opref]))
         trace_end = min(25,len(self.env['program'][opref:]))
         print("Trace: \"" + ''.join(self.env['program'][opref-trace_beg:opref+trace_end]) + "\"")
@@ -365,12 +401,28 @@ class VirtualMachine(object):
             self.env['spoutput'] = True
 
     def op_exec(self):
-        if self.cond_error('empty', 'last_executable'):
-            self.env['excode'] += list(self.env['stack'].pop())
+        if self.cond_error('empty'):
+            self.env['excode'] += list(self.env['stack'].pop()[0])
+
+    def viewstr(self, lit):
+        try:
+            if lit[1] == 'list':
+                tostr = '('
+                for n,i in enumerate(lit[0]):
+                    if i[0] == 'push':
+                        tostr += self.viewstr(i[1])
+                    else: tostr += self.viewstr(i[0])
+                    if n != len(lit[0])-1:
+                        tostr += ' '
+                tostr += ')'
+                return tostr
+            return lit
+        except TypeError:
+            return str(lit)
 
     def op_stview(self):
         if self.cond_error('empty'):
-            print('postfix.stack -> ' + ' '.join([str(i) for i in self.env['stack']]))
+            print('postfix.stack -> ' + ' '.join([self.viewstr(i) for i in self.env['stack']]))
             self.env['spoutput'] = True
 
     def op_stclear(self):
@@ -387,7 +439,10 @@ class VirtualMachine(object):
 
     def op_load(self):
         name = self.env['stack'].pop()
-        self.env['stack'].append(self.env[name])
+        try:
+            self.env['stack'].append(self.env[name])
+        except KeyError:
+            self.push_error("Name '{}' does not exist".format(name))
 
     def op_del(self):
         name = self.env['stack'].pop()
